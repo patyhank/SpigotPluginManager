@@ -1,6 +1,11 @@
 package net.lenni0451.spm.utils;
 
+import io.papermc.paper.plugin.entrypoint.Entrypoint;
+import io.papermc.paper.plugin.entrypoint.EntrypointHandler;
+import io.papermc.paper.plugin.provider.type.PluginFileType;
+import io.papermc.paper.plugin.storage.ProviderStorage;
 import net.lenni0451.spm.messages.I18n;
+import net.lenni0451.spm.storage.SingularRuntimePluginProviderStorage;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.PluginCommand;
@@ -11,8 +16,11 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URLClassLoader;
 import java.util.*;
@@ -246,7 +254,24 @@ public class PluginUtils {
         this.updatePlugin(targetFile.get());
 
         try {
-            targetPlugin = this.getPluginManager().loadPlugin(targetFile.get());
+            Class<?> rpeh = Class.forName("io.papermc.paper.plugin.manager.RuntimePluginEntrypointHandler");
+
+            Constructor<?> constructor = rpeh.getDeclaredConstructor(ProviderStorage.class);
+            constructor.setAccessible(true);
+            SingularRuntimePluginProviderStorage storage = new SingularRuntimePluginProviderStorage();
+            Object o = constructor.newInstance(storage);
+
+            JarFile file = new JarFile(targetFile.get());
+            PluginFileType<?, ?> type = PluginFileType.guessType(file);
+            type.register((EntrypointHandler) o, file, targetFile.get().toPath());
+
+            Method enter = rpeh.getDeclaredMethod("enter", Entrypoint.class);
+            enter.setAccessible(true);
+            enter.invoke(o, Entrypoint.PLUGIN);
+            Method providerStorage = rpeh.getDeclaredMethod("getPluginProviderStorage");
+            providerStorage.setAccessible(true);
+            SingularRuntimePluginProviderStorage stor = (SingularRuntimePluginProviderStorage) providerStorage.invoke(o);
+            targetPlugin = stor.getSingleLoaded().get();
         } catch (UnknownDependencyException e) {
 //            throw new IllegalStateException("Missing Dependency");
             throw new IllegalStateException(I18n.t("pm.pluginutils.loadPlugin.missingDependency"));
@@ -256,6 +281,8 @@ public class PluginUtils {
         } catch (InvalidDescriptionException e) {
 //            throw new IllegalStateException("Invalid plugin description");
             throw new IllegalStateException(I18n.t("pm.pluginutils.loadPlugin.invalidPluginDescription"));
+        } catch (Exception e) {
+            throw new IllegalStateException(I18n.t("pm.pluginutils.loadPlugin.invalidPluginFile"));
         }
 
         targetPlugin.onLoad();
